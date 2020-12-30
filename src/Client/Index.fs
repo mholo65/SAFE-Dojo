@@ -16,7 +16,8 @@ open Shared
 /// The different elements of the completed report.
 type Report =
     { Location : LocationResponse
-      Crimes : CrimeResponse array }
+      Crimes : CrimeResponse array
+      Weather : WeatherResponse }
 
 type ServerState = Idle | Loading | ServerError of string
 
@@ -30,6 +31,7 @@ type Model =
 /// The different types of messages in the system.
 type Msg =
     | GetReport
+    | Clear
     | PostcodeChanged of string
     | GotReport of Report
     | ErrorMsg of exn
@@ -52,10 +54,12 @@ let getResponse postcode = async {
     (* Task 4.4 WEATHER: Fetch the weather from the API endpoint you created.
        Then, save its value into the Report below. You'll need to add a new
        field to the Report type first, though! *)
+    let! weather = dojoApi.GetWeather postcode
 
     return
         { Location = location
-          Crimes = crimes }
+          Crimes = crimes
+          Weather = weather }
 }
 
 /// The update function knows how to update the model given a message.
@@ -65,17 +69,19 @@ let update msg model =
         { model with ServerState = Loading }, Cmd.OfAsync.either getResponse postcode GotReport ErrorMsg
     | _, GetReport ->
         model, Cmd.none
+    | _, Clear -> init()
     | _, GotReport response ->
         { model with
             ValidationError = None
             Report = Some response
             ServerState = Idle }, Cmd.none
     | _, PostcodeChanged p ->
+        let validationError = if not (Validation.isValidPostcode p) then Some "Invalid postcode" else None
         { model with
             Postcode = p
             (* Task 2.2 Validation. Use the Validation.isValidPostcode function to implement client-side form validation.
                Note that the validation is the same shared code that runs on the server! *)
-            ValidationError = None }, Cmd.none
+            ValidationError = validationError }, Cmd.none
     | _, ErrorMsg e ->
         { model with ServerState = ServerError e.Message }, Cmd.none
 
@@ -119,11 +125,13 @@ module ViewParts =
             map [
                 (* Task 3.2 MAP: Set the center of the map using MapProps.Center, supply the lat/long value as input.
                    Task 3.3 MAP: Update the Zoom to 15. *)
-                MapProps.Zoom 11.
+                MapProps.Center latLong
+                MapProps.Zoom 15.0
                 MapProps.Style [ Height 500 ]
             ] [
                 tileLayer [ TileLayerProps.Url "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" ] []
                 (* Task 3.4 MAP: Create a marker for the map. Use the makeMarker function above. *)
+                makeMarker latLong (sprintf "%s - %s" lr.Postcode lr.Location.Region)
             ]
         ]
 
@@ -141,7 +149,7 @@ module ViewParts =
                             Heading.h3 [ Heading.Is4; Heading.Props [ Style [ Width "100%" ] ] ] [
                                 (* Task 4.7 WEATHER: Get the temperature from the given weather report
                                    and display it here instead of an empty string. *)
-                                str ""
+                                str (sprintf "%f" weatherReport.AverageTemperature)
                             ]
                         ]
                     ]
@@ -210,6 +218,13 @@ let view (model:Model) dispatch =
                                 Button.IsLoading (model.ServerState = ServerState.Loading)
                             ] [ str "Submit" ]
                         ]
+                        Level.item [] [
+                            Button.button [
+                                Button.IsFullWidth
+                                Button.Color IsDanger
+                                Button.OnClick (fun _ -> dispatch Clear)
+                            ] [ str "Clear" ]
+                        ]
                     ]
                 ]
             ]
@@ -229,6 +244,7 @@ let view (model:Model) dispatch =
                     Tile.Size Tile.Is12
                 ] [
                     Tile.parent [ Tile.Size Tile.Is12 ] [
+                        mapTile report.Location
                         (* Task 3.1 MAP: Call the mapTile function here, which creates a
                            tile to display a map using the React Leaflet component. The function
                            takes in a LocationResponse value as input and returns a ReactElement. *)
@@ -240,6 +256,7 @@ let view (model:Model) dispatch =
                         (* Task 4.5 WEATHER: Generate the view code for the weather tile
                            using the weatherTile function, supplying the weather data
                            from the report value, and include it here as part of the list *)
+                        weatherTile report.Weather
                     ]
                     Tile.parent [ Tile.Size Tile.Is8 ] [
                         crimeTile report.Crimes
